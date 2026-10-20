@@ -1,0 +1,4 @@
+# Python packages for the optional kNN leakage check only (the main analysis is in R).
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3

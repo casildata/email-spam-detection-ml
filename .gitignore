@@ -1,0 +1,12 @@
+outputs/
+!outputs/.gitkeep
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+~$*
+Rplots.pdf
