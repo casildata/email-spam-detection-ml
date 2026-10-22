@@ -8,7 +8,7 @@ dir.create("outputs", showWarnings = FALSE)
 
 #### Load & tidy ####
 data <- read_csv("data/raw/spambase.csv", show_col_types = FALSE) %>%
-  dplyr::rename(char_freq_semi   = `char_freq_;`,  # reshape (loaded later) masks rename()
+  dplyr::rename(char_freq_semi   = `char_freq_;`,
          char_freq_par    = `char_freq_(`,
          char_freq_brack  = `char_freq_[`,
          char_freq_excl   = `char_freq_!`,
@@ -17,7 +17,7 @@ data <- read_csv("data/raw/spambase.csv", show_col_types = FALSE) %>%
 
 #### Correlation screening ####
 cor.mat <- round(cor(data), 2)
-melted.cor.mat <- melt(cor.mat)
+melted.cor.mat <- setNames(as.data.frame(as.table(cor.mat)), c("X1", "X2", "value"))
 heatmap <- ggplot(melted.cor.mat, aes(x = X1, y = X2, fill = value)) +
   geom_tile() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
@@ -51,7 +51,7 @@ cm_spam(logit_prediction, valid_df$spam)
 
 #### (2) k-nearest neighbours ####
 # NOTE: k is chosen on the validation set (as in the original analysis), which is mildly optimistic.
-# Cross-validated tuning on the training set is listed under "Next steps" in the README.
+# Cross-validated tuning on the training set is listed under "Roadmap" in the README.
 accuracy_df <- data.frame(k = seq(1, 19, 2), accuracy = NA_real_)
 for (i in seq_len(nrow(accuracy_df))) {
   knn.pred <- knn(train = train_stand[, -dep_var], test = valid_stand[, -dep_var],
@@ -111,3 +111,26 @@ cm_spam(results$majority, results$actual)                  # majority vote
 cm_spam(ifelse(results$avg > 0.5, 1, 0), results$actual)   # average probability
 
 write_csv(results, "outputs/validation_predictions.csv")
+
+#### Summary: baselines and per-model metrics ####
+# Baselines give the models context: always answering "not spam", and the single best
+# rule (a one-split tree). xval = 0 keeps rpart from drawing random numbers.
+stump <- rpart(spam ~ ., data = train_df, method = "class",
+               control = rpart.control(maxdepth = 1, xval = 0))
+stump_prediction <- as.numeric(as.character(predict(stump, newdata = valid_df, type = "class")))
+cat(sprintf("One-rule baseline: %s >= %.4f\n", rownames(stump$splits)[1], stump$splits[1, "index"]))
+
+metrics <- rbind(
+  "Random forest"                 = spam_metrics(forest_prediction, valid_df$spam),
+  "Ensemble: majority vote"       = spam_metrics(results$majority, results$actual),
+  "Ensemble: average probability" = spam_metrics(ifelse(results$avg > 0.5, 1, 0), results$actual),
+  "Logistic regression"           = spam_metrics(logit_prediction, valid_df$spam),
+  "Neural network"                = spam_metrics(ann_prediction, valid_df$spam),
+  "k-NN"                          = spam_metrics(knn_fit, valid_df$spam),
+  "Classification tree"           = spam_metrics(tree_prediction, valid_df$spam),
+  "Baseline: one rule"            = spam_metrics(stump_prediction, valid_df$spam),
+  "Baseline: always not spam"     = spam_metrics(rep(0, nrow(valid_df)), valid_df$spam)
+)
+metrics <- data.frame(model = rownames(metrics), round(100 * metrics, 2), row.names = NULL)
+print(metrics)
+write_csv(metrics, "outputs/metrics.csv")

@@ -1,14 +1,12 @@
 #### Libraries ####
-source("R/check_packages.R")  # installs anything in r-packages.txt that's missing
+source("R/check_packages.R")  # stops with an install command if a package is missing
 suppressPackageStartupMessages({
   library(tidyverse)    # data wrangling
   library(caret)        # partitioning, preprocessing, confusion matrices
-  library(forecast)     # accuracy() error measures
   library(FNN)          # k-nearest neighbours
   library(rpart)        # classification tree
   library(rpart.plot)   # tree plot
   library(randomForest) # random forest
-  library(reshape)      # melt() for the heatmap
   library(neuralnet)    # artificial neural network
 })
 
@@ -40,4 +38,14 @@ max_accuracy <- function(actual, prob, plot_file = NULL) {
 cm_spam <- function(pred, actual) {
   confusionMatrix(relevel(factor(pred, levels = c(0, 1)), "1"),
                   relevel(factor(actual, levels = c(0, 1)), "1"))
+}
+
+# Accuracy, spam caught (sensitivity), legitimate mail passed (specificity) and the
+# false-positive rate: the share of legitimate mail that would be flagged as spam
+spam_metrics <- function(pred, actual) {
+  cm <- cm_spam(pred, actual)
+  c(accuracy            = cm$overall[["Accuracy"]],
+    sensitivity         = cm$byClass[["Sensitivity"]],
+    specificity         = cm$byClass[["Specificity"]],
+    false_positive_rate = 1 - cm$byClass[["Specificity"]])
 }

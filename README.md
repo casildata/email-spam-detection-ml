@@ -14,7 +14,8 @@
 ## TL;DR
 
 - **Data:** [UCI Spambase](https://archive.ics.uci.edu/dataset/94/spambase), 4,601 emails (39.4% spam) × 57 numeric features (frequencies of words like `free`, `remove`, `credit`; characters `!` `$`; runs of CAPITALS).
-- **Best model:** Random forest, **94.95% validation accuracy**. The majority-vote ensemble reaches 94.08%.
+- **Best model:** Random forest, **94.95% validation accuracy**, against 79.46% for the best single rule and 61.74% for always answering "not spam". The majority-vote ensemble reaches 94.08%.
+- **The catch:** the forest still flags **3.35%** of legitimate email as spam, about 1 in 30. That's the number a mail-security team would push on, and it's next on the roadmap.
 - **Audit finding:** while preparing this repo I found that the kNN model had been fit on data that included the validation rows. A Python re-check shows this inflated kNN accuracy from **~89.8% to ~92.8%**. The code is fixed and the check is included ([`analysis/knn_leakage_check.py`](analysis/knn_leakage_check.py)).
 
 ---
@@ -37,21 +38,25 @@ flowchart LR
 
 ### Why this matters for security
 
-Spam filtering is the original ML-in-security problem, and the same pipeline shape carries over to phishing-email triage, malicious-attachment scoring, and alert classification. In a mail-security context the costs are asymmetric: a false positive (a real email quarantined) costs differently from a false negative (phish delivered). That is why this project reports sensitivity and specificity instead of accuracy alone, and why the cut-off is tuned rather than fixed at 0.5.
+Spam filtering is the original ML-in-security problem, and the same pipeline shape carries over to phishing-email triage, malicious-attachment scoring, and alert classification. In a mail-security context the costs are asymmetric: a false positive (a real email quarantined) costs differently from a false negative (phish delivered). That is why the results below report the false-positive rate and the share of spam caught next to accuracy. The probability cut-offs are still chosen to maximize accuracy, which weighs both errors equally; choosing them for a false-positive budget is the first item on the [roadmap](#roadmap).
 
 ## Results
 
-Validation accuracy on a 40% stratified holdout, from `Rscript scripts/spam_classifier.R` with the leakage and ensemble fixes applied. The run is seeded (`set.seed(1)`), so re-running it reproduces these numbers.
+Validation results on a 40% stratified holdout (1,840 emails), from `Rscript scripts/spam_classifier.R` with the leakage and ensemble fixes applied. The run is seeded (`set.seed(1)`), so re-running it reproduces these numbers; the script also writes them to `outputs/metrics.csv`. **Spam caught** is sensitivity; **false-positive rate** is the share of legitimate email flagged as spam (1 − specificity).
 
-| Model | Validation accuracy | Notes |
-|---|---|---|
-| **Random forest** | **94.95%** | Best overall |
-| Ensemble: majority vote | 94.08% | Logit + kNN + ANN + RF; a 2–2 tie goes to the average probability |
-| Ensemble: average probability | 93.91% | Logit + kNN + ANN + RF |
-| Logistic regression | 92.66% | Probability cut-off tuned on training data |
-| Neural network (1 hidden layer, 2 nodes) | 92.55% | Inputs min-max scaled on training data |
-| k-NN (k = 7) | 90.54% | Fit on training rows only; the original leaky fit scored 92.29% (see below) |
-| Classification tree | 88.37% | Most interpretable |
+| Model | Accuracy | Spam caught | False-positive rate | Notes |
+|---|---|---|---|---|
+| **Random forest** | **94.95%** | 92.19% | **3.35%** | Best overall |
+| Ensemble: majority vote | 94.08% | 91.76% | 4.49% | Logit + kNN + ANN + RF; a 2–2 tie goes to the average probability |
+| Ensemble: average probability | 93.91% | 91.34% | 4.49% | Logit + kNN + ANN + RF |
+| Logistic regression | 92.66% | 92.76% | 7.39% | Probability cut-off tuned on training data |
+| Neural network (1 hidden layer, 2 nodes) | 92.55% | 90.34% | 6.07% | Inputs min-max scaled on training data |
+| k-NN (k = 7) | 90.54% | 84.80% | 5.90% | Fit on training rows only; the original leaky fit scored 92.29% (see below) |
+| Classification tree | 88.37% | 81.53% | 7.39% | Most interpretable |
+| *Baseline: one rule* | *79.46%* | *75.85%* | *18.31%* | *Flag if `!` makes up at least 0.08% of characters (the best single split)* |
+| *Baseline: always "not spam"* | *61.74%* | *0%* | *0%* | *The share of legitimate email* |
+
+The models add about 15 points over the best one-line rule. But even the best model flags 3.35% of legitimate email, roughly 1 in 30, which is too many for a production mail filter. Accuracy alone hides that.
 
 | Random forest: top 15 features | Classification tree |
 |---|---|
@@ -63,22 +68,33 @@ Both models lean on the same signals: `!` and `$` frequency, "remove", and runs 
 
 **Why the kNN number changed.** The original call was `knn(train = <full standardized dataset>, test = <validation rows>)`, so each validation email could find *itself* among its neighbours. Re-implemented in scikit-learn over 20 random 60/40 splits: leaky setup **92.8% ± 0.5%**, correct setup **89.8% ± 0.5%**.
 
+**Limitations of the data and the evaluation**
+
+- **One mailbox from 1999.** Spambase was collected from a single HP Labs mailbox. Words that identify that recipient, such as `hp`, `george` and `hpl`, appear among the random forest's top 15 features, so part of the score wouldn't carry over to someone else's mail. Modern phishing also looks very different from 1990s spam.
+- **Duplicate emails.** Spambase contains exact duplicate rows, and some land on both sides of the random split, which flatters every model slightly.
+- **Pre-computed features only.** The data is 57 word and character frequencies, not raw text, so this model can't score a real email without re-deriving those features.
+- **One split, accuracy-tuned cut-offs.** Results come from a single seeded 60/40 split. k for k-NN is chosen on the validation set (mildly optimistic), and cut-offs maximize accuracy rather than respecting a false-positive budget.
+
 ## Getting started
 
 ### Requirements
 
 - R 4.5 or later (tested on 4.6.1) with the packages below (`neuralnet` depends on `Deriv`, which needs R 4.5).
-- Optional, for the leakage check: Python 3.10 or later (tested on 3.14) with NumPy, pandas and scikit-learn (`analysis/requirements.txt`, installed automatically if missing).
+- Optional, for the leakage check: Python 3.10 or later (tested on 3.14) with NumPy, pandas and scikit-learn (`analysis/requirements.txt`).
 - Data ships with the repo in `data/raw/spambase.csv`.
 
 ### Install
 
-Missing packages are installed automatically the first time you run the scripts; an interactive R session (RStudio, VS Code) asks first. The list lives in [`r-packages.txt`](r-packages.txt). To install everything up front instead:
-
 ```r
-install.packages(c("tidyverse", "caret", "forecast", "FNN", "rpart", "rpart.plot",
-                   "randomForest", "reshape", "neuralnet"))
+install.packages(c("tidyverse", "caret", "FNN", "rpart", "rpart.plot",
+                   "randomForest", "neuralnet"))
 ```
+
+```bash
+pip install -r analysis/requirements.txt    # optional leakage check
+```
+
+The scripts never install anything. If a package is missing, they stop and print the command to run. The R list lives in [`r-packages.txt`](r-packages.txt).
 
 ### Run
 
@@ -91,25 +107,25 @@ python analysis/knn_leakage_check.py data/raw/spambase.csv        # optional lea
 
 ### Output
 
-The tree and feature-importance figures are written to `docs/figures/` (tracked, shown above). The correlation heatmap, the cut-off tuning curves for logistic regression and the neural network, and the validation predictions are written to `outputs/` (git-ignored).
+About 30 seconds. The tree and feature-importance figures are written to `docs/figures/` (tracked, shown above). The metrics table (`metrics.csv`), the correlation heatmap, the cut-off tuning curves for logistic regression and the neural network, and the validation predictions are written to `outputs/` (git-ignored).
 
 ## Repository structure
 
 ```
 email-spam-detection-ml/
-├── r-packages.txt              # R packages (installed automatically if missing)
+├── r-packages.txt              # R packages the scripts need
 ├── R/
-│   ├── check_packages.R        # installs missing packages from r-packages.txt
-│   └── functions.R             # cut-off tuning, confusion-matrix helper, libraries
+│   ├── check_packages.R        # stops with an install command if a package is missing
+│   └── functions.R             # cut-off tuning, confusion-matrix and metrics helpers, libraries
 ├── scripts/spam_classifier.R   # end-to-end: EDA → 5 models → ensemble
 ├── analysis/
 │   ├── knn_leakage_check.py    # reproduces the kNN leakage finding (scikit-learn)
-│   ├── check_requirements.py   # installs missing Python packages
+│   ├── check_requirements.py   # stops with the pip command if a package is missing
 │   └── requirements.txt        # Python packages for the leakage check
 ├── data/
 │   ├── README.md               # source, license, citation
 │   └── raw/spambase.csv        # UCI Spambase (CC BY 4.0)
-├── docs/figures/               # README figures (tree, feature importance, heatmap)
+├── docs/figures/               # README figures (tree, feature importance)
 ├── outputs/                    # generated, .gitignored
 ├── CHANGELOG.md
 └── LICENSE
@@ -118,6 +134,15 @@ email-spam-detection-ml/
 ## Skills demonstrated
 
 `Supervised classification` · `Model comparison` · `Ensemble methods` · `Feature scaling without leakage` · `Hyperparameter / threshold tuning` · `Code audit & reproducibility` · `R` · `Python / scikit-learn`
+
+## Roadmap
+
+- Evaluate against a false-positive budget: spam caught at a 1% and 0.1% false-positive rate, ROC and precision-recall curves, and a cut-off chosen on a validation fold and reported on a held-out test set.
+- Remove duplicate emails before splitting, and report the mean and spread over several random splits.
+- A "generic" model without the recipient-specific words (`hp`, `george`, …), to estimate how the filter would do on another mailbox.
+- Choose k for k-NN by cross-validation on the training set.
+- Tests, a pinned R environment (`renv.lock`) and CI that re-runs the script and checks the reported numbers.
+- Rebuild the features from raw email text and test on a modern phishing corpus.
 
 ## Data & citations
 

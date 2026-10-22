@@ -1,11 +1,9 @@
 # R packages (CRAN) used by this repository, one per line.
-# R/check_packages.R installs any that are missing when the scripts run.
+# R/check_packages.R stops with an install command if any are missing.
 tidyverse
 caret
-forecast
 FNN
 rpart       # ships with R
 rpart.plot
 randomForest
-reshape
 neuralnet
